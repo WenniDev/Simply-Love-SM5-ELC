@@ -80,6 +80,16 @@ af2[#af2+1] = Def.ActorFrame{
 	end,
 }
 
+af2[#af2+1] = Def.Sprite{
+	Texture=THEME:GetPathB("ScreenTitleMenu", "underlay/logo-coeur.png"),
+	InitCommand=function(self)
+		self:zoom(0.15):xy(0, -15):diffusealpha(0)
+	end,
+	OnCommand=function(self)
+		self:sleep(0.1):decelerate(0.33):diffusealpha(1)
+	end,
+}
+
 -- ensure that af2 is added as a child of af
 af[#af+1] = af2
 
