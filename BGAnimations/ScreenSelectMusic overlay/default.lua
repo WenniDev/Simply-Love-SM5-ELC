@@ -1,3 +1,85 @@
+-- Returns the list of group names allowed in Casual mode, read from CasualMode-Groups.txt.
+-- Falls back to all groups if the file is missing or empty.
+local GetCasualGroups = function()
+	local path = THEME:GetCurrentThemeDirectory() .. "Other/CasualMode-Groups.txt"
+	local groups = {}
+
+	if FILEMAN:DoesFileExist(path) then
+		local file = RageFileUtil.CreateRageFile()
+		if file:Open(path, 1) then
+			local contents = file:Read()
+			file:Close()
+			for line in contents:gmatch("[^\r\n]+") do
+				if SONGMAN:DoesSongGroupExist(line) then
+					groups[#groups+1] = line
+				end
+			end
+		end
+		file:destroy()
+	end
+
+	if #groups == 0 then
+		return SONGMAN:GetSongGroupNames()
+	end
+	return groups
+end
+
+-- Extracts "GroupName/SongDir" path from a song object, matching the format
+-- expected by SONGMAN:SetPreferredSongs().
+local GetSongPath = function(song)
+	local dir = song:GetSongDir():gsub("/$", "")
+	return song:GetGroupName() .. "/" .. (dir:match("[^/]+$") or "")
+end
+
+-- Builds a preferred-songs file containing only Casual-valid songs (groups from
+-- CasualMode-Groups.txt, with at least one chart ≤ CasualMaxMeter), then
+-- switches the music wheel to SortOrder_Preferred so only those songs appear.
+-- Songs are grouped by pack using "---GroupName" section headers so the wheel
+-- preserves the folder structure.
+local ApplyCasualGroupFilter = function(screen)
+	local stepsType   = GAMESTATE:GetCurrentStyle():GetStepsType()
+	local maxMeter    = ThemePrefs.Get("CasualMaxMeter")
+	local longVerSecs = PREFSMAN:GetPreference("LongVerSongSeconds")
+	local content     = ""
+	local totalSongs  = 0
+
+	for group in ivalues(GetCasualGroups()) do
+		local groupContent = ""
+		for song in ivalues(SONGMAN:GetSongsInGroup(group)) do
+			if song:HasStepsType(stepsType)
+			and song:GetLastSecond() < longVerSecs
+			and UNLOCKMAN:IsSongLocked(song) == 0
+			then
+				for steps in ivalues(song:GetStepsByStepsType(stepsType)) do
+					if steps:GetMeter() <= maxMeter then
+						groupContent = groupContent .. GetSongPath(song) .. "\n"
+						totalSongs   = totalSongs + 1
+						break
+					end
+				end
+			end
+		end
+		if #groupContent > 0 then
+			content = content .. "---" .. group .. "\n" .. groupContent
+		end
+	end
+
+	if totalSongs == 0 then return end
+
+	local path = THEME:GetCurrentThemeDirectory() .. "Other/_CasualFilter.txt"
+	local file = RageFileUtil.CreateRageFile()
+	if file:Open(path, 2) then
+		file:Write(content)
+		file:Close()
+	end
+	file:destroy()
+
+	SONGMAN:SetPreferredSongs(path, true)
+	if SONGMAN:GetPreferredSortSongs() then
+		screen:GetMusicWheel():ChangeSort("SortOrder_Preferred")
+	end
+end
+
 local ResetModsInput = function(event)
 	if event.type == "InputEventType_Release" then return false end
 	if event.GameButton ~= "EffectUp" then return false end
@@ -38,6 +120,19 @@ local af = Def.ActorFrame{
 	-- time ScreenGameplay loads, it should have a properly animated entrance.
 	OnCommand=function(self)
 		SCREENMAN:GetTopScreen():AddInputCallback(ResetModsInput)
+		-- Apply Casual group/difficulty filter immediately if entering in Casual mode.
+		if SL.Global.GameMode == "Casual" then
+			ApplyCasualGroupFilter(SCREENMAN:GetTopScreen())
+		end
+	end,
+	-- Re-apply or remove the filter whenever the player switches game mode.
+	SLGameModeChangedMessageCommand=function(self)
+		local screen = SCREENMAN:GetTopScreen()
+		if SL.Global.GameMode == "Casual" then
+			ApplyCasualGroupFilter(screen)
+		else
+			screen:GetMusicWheel():ChangeSort("SortOrder_Group")
+		end
 	end,
 	InitCommand=function(self)
 		SL.Global.GameplayReloadCheck = false
